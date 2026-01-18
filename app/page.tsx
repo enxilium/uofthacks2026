@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { generateNewSession, getCurrentSessionId, trackEvent } from "@/lib/tracking";
 
 const cartItems = [
@@ -38,13 +38,12 @@ export default function CheckoutPage() {
     terms: false,
     marketing: false,
   });
-  const [sessionId, setSessionId] = useState<string>(() => {
-    // Initialize safely for SSR, but get value immediately on client
-    if (typeof window !== "undefined") {
-      return getCurrentSessionId();
-    }
-    return "";
-  });
+  const [sessionId, setSessionId] = useState<string>("");
+
+  // Get current session ID on mount
+  useEffect(() => {
+    setSessionId(getCurrentSessionId());
+  }, []);
 
   // Simulate a new user (for demo)
   const handleSimulateNewUser = () => {
@@ -619,7 +618,7 @@ export default function CheckoutPage() {
         {/* Demo Controls - Fixed bottom right */}
         <div className="fixed bottom-4 right-4 bg-gray-900 text-white rounded-lg shadow-2xl p-4 border border-gray-700 z-50">
           <div className="text-xs text-gray-400 mb-2 font-mono">🤖 FLUXOR DEMO</div>
-          <div suppressHydrationWarning className="text-[10px] text-gray-500 mb-3 font-mono truncate max-w-[200px]">
+          <div className="text-[10px] text-gray-500 mb-3 font-mono truncate max-w-[200px]">
             Session: {sessionId ? sessionId.slice(0, 8) + '...' : 'None'}
           </div>
           <button
@@ -636,5 +635,4 @@ export default function CheckoutPage() {
     </div>
   );
 }
-
 
