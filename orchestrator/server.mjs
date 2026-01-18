@@ -20,11 +20,15 @@ const runOpenCode = (prompt) =>
         let stderr = "";
 
         child.stdout.on("data", (chunk) => {
-            stdout += chunk.toString();
+            const text = chunk.toString();
+            stdout += text;
+            process.stdout.write(`[opencode stdout] ${text}`);
         });
 
         child.stderr.on("data", (chunk) => {
-            stderr += chunk.toString();
+            const text = chunk.toString();
+            stderr += text;
+            process.stderr.write(`[opencode stderr] ${text}`);
         });
 
         child.on("error", (error) => {
@@ -32,6 +36,7 @@ const runOpenCode = (prompt) =>
         });
 
         child.on("close", (code) => {
+            console.log(`[opencode] exited with code ${code ?? "unknown"}`);
             if (code === 0) {
                 resolvePromise(stdout.trim());
                 return;
@@ -79,7 +84,9 @@ const beginExperiment = async (experimentID, prompt) => {
         throw new Error("experimentID and prompt are required.");
     }
     experiments.set(experimentID, prompt);
-    return runOpenCode(prompt);
+    const output = await runOpenCode(prompt);
+    const timestamp = new Date().toISOString();
+    return { output, timestamp, experimentID };
 };
 
 const revertExperiment = async (experimentID) => {
@@ -95,6 +102,7 @@ const revertExperiment = async (experimentID) => {
 };
 
 const server = createServer(async (req, res) => {
+    let body = {};
     try {
         if (req.method !== "POST") {
             sendJson(res, 405, { error: "Method Not Allowed" });
@@ -102,14 +110,19 @@ const server = createServer(async (req, res) => {
         }
 
         const url = new URL(req.url || "", `http://${HOST}:${PORT}`);
-        const body = await parseJsonBody(req);
+        body = await parseJsonBody(req);
 
         if (url.pathname === "/begin_experiment") {
-            const output = await beginExperiment(
+            const result = await beginExperiment(
                 body.experimentID,
                 body.prompt,
             );
-            sendJson(res, 200, { ok: true, output });
+            sendJson(res, 200, { 
+                ok: true, 
+                output: result.output,
+                timestamp: result.timestamp,
+                experimentID: result.experimentID
+            });
             return;
         }
 
@@ -119,8 +132,21 @@ const server = createServer(async (req, res) => {
             return;
         }
 
+        if (url.pathname === "/shutdown") {
+            sendJson(res, 200, { ok: true, message: "Server shutting down..." });
+            setTimeout(() => process.exit(0), 100);
+            return;
+        }
+
         sendJson(res, 404, { error: "Not Found" });
     } catch (error) {
+        const url = new URL(req.url || "", `http://${HOST}:${PORT}`);
+        console.error("[orchestrator] request failed", {
+            method: req.method,
+            path: url.pathname,
+            body,
+            error: error?.message || String(error),
+        });
         sendJson(res, 400, { error: error?.message || "Request failed." });
     }
 });

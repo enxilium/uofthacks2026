@@ -1,0 +1,18 @@
+{
+  "name": "fluxor-orchestrator",
+  "version": "1.0.0",
+  "description": "Fluxor AI Orchestrator - Automated UX improvement agent",
+  "main": "server.mjs",
+  "scripts": {
+    "server": "node server.mjs",
+    "tui": ".venv/bin/python fluxor.py",
+    "start": "node server.mjs & .venv/bin/python fluxor.py",
+    "setup": ".venv/bin/pip install -r requirements.txt",
+    "wipe": ".venv/bin/python wipe_db.py",
+    "shutdown": ".venv/bin/python shutdown.py",
+    "test:openrouter": ".venv/bin/python test_openrouter_schema.py"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}

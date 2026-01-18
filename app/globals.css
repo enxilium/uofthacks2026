@@ -12,15 +12,24 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+.btn-primary {
+  @apply bg-black text-white px-6 py-3 rounded-full font-medium hover:bg-gray-800 transition-colors;
+}
+
+.btn-secondary {
+  @apply border border-black text-black px-6 py-3 rounded-full font-medium hover:bg-black hover:text-white transition-colors;
+}
+
+.product-card {
+  @apply bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-shadow duration-300;
+}
+
+.input-field {
+  @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent;
 }
