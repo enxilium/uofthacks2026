@@ -8,13 +8,14 @@ import httpx
 import sys
 
 ORCHESTRATOR_URL = "http://127.0.0.1:8787"
+OPENCODE_PORT = 4321
 
-def kill_by_port():
-    """Kill any process listening on port 8787"""
+def kill_by_port(port: int):
+    """Kill any process listening on the given port"""
     try:
-        # Find process on port 8787
+        # Find process on port
         result = subprocess.run(
-            ["lsof", "-ti", ":8787"],
+            ["lsof", "-ti", f":{port}"],
             capture_output=True,
             text=True
         )
@@ -26,7 +27,7 @@ def kill_by_port():
         
         for pid in pids:
             subprocess.run(["kill", "-9", pid], check=True)
-            print(f"   Killed process {pid}")
+            print(f"   Killed process {pid} on port {port}")
         
         return True
     except Exception:
@@ -48,10 +49,19 @@ def main():
     
     # Fall back to killing by port
     print("   Attempting force kill...")
-    if kill_by_port():
+    if kill_by_port(8787):
         print("✅ Server forcefully terminated!")
     else:
         print("❌ No server process found on port 8787")
+
+    # Also kill opencode serve on port 4321
+    print("🛑 Shutting down opencode server...")
+    if kill_by_port(OPENCODE_PORT):
+        print("✅ Opencode server terminated!")
+    else:
+        print("❌ No opencode server process found on port 4321")
+
+    if not kill_by_port(8787):
         sys.exit(1)
 
 if __name__ == "__main__":

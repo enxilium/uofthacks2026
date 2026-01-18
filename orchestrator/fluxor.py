@@ -308,6 +308,23 @@ def validate_schema(value, schema: dict, path: str = "$") -> list[str]:
 
 
 # ============================================
+# Timestamp Helpers
+# ============================================
+
+def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _event_timestamp(event: dict) -> Optional[datetime]:
+    return _parse_timestamp(event.get("created_at") or event.get("timestamp"))
+
+
+# ============================================
 # AI Agent Functions
 # ============================================
 
@@ -464,7 +481,7 @@ class ThoughtWidget(Static):
         
         emoji, phase_style, border_char = phase_styles[self.thought.phase]
         time_str = self.thought.timestamp.strftime("%H:%M:%S")
-        wrap_width = 74
+        wrap_width = max(48, min(96, (self.size.width or 80) - 10))
         thinking_text = textwrap.fill(self.thought.thinking, width=wrap_width, subsequent_indent="     ")
         reasoning_text = textwrap.fill(self.thought.reasoning, width=wrap_width, subsequent_indent="     ")
         action_text = textwrap.fill(self.thought.action or "", width=wrap_width, subsequent_indent="     ")
@@ -530,11 +547,13 @@ class FluxorApp(App):
         grid-size: 1;
         grid-rows: auto auto auto 1fr auto;
         background: $surface-darken-2;
+        min-width: 0;
+        min-height: 0;
     }
     
     #header-container {
         height: auto;
-        padding: 1 2;
+        padding: 1 1;
         background: $primary-darken-3;
         border: heavy $primary;
     }
@@ -552,29 +571,34 @@ class FluxorApp(App):
     
     #stats-bar {
         height: auto;
-        padding: 1 2;
+        padding: 0 1;
         background: $surface-darken-1;
         border-bottom: solid $primary-darken-2;
     }
     
     #phase-bar {
         height: auto;
-        padding: 1 2;
+        padding: 0 1;
         background: $surface;
         border-bottom: dashed $secondary;
     }
     
     #main-content {
-        padding: 1 2;
+        padding: 0 1;
+        height: 1fr;
+        min-height: 0;
+        min-width: 0;
     }
     
     #experiments-panel {
         display: none;
         height: 100%;
+        min-height: 0;
         border: round $secondary;
-        padding: 1;
+        padding: 0 1;
         background: $surface-darken-1;
         margin-right: 1;
+        width: 26;
     }
     
     #experiments-panel.visible {
@@ -583,9 +607,11 @@ class FluxorApp(App):
     
     #thoughts-panel {
         height: 100%;
+        min-height: 0;
         border: round $primary;
-        padding: 1;
+        padding: 0 1;
         background: $surface-darken-1;
+        width: 1fr;
     }
     
     .panel-title {
@@ -596,7 +622,7 @@ class FluxorApp(App):
     
     #footer-info {
         height: auto;
-        padding: 1 2;
+        padding: 0 1;
         background: $surface-darken-2;
         text-align: center;
         border-top: solid $primary-darken-2;
@@ -605,6 +631,7 @@ class FluxorApp(App):
     
     RichLog {
         height: 100%;
+        min-height: 0;
         scrollbar-gutter: stable;
         background: $surface-darken-2;
         padding: 0 1;
@@ -614,7 +641,8 @@ class FluxorApp(App):
     #main-content.with-experiments {
         layout: grid;
         grid-size: 2;
-        grid-columns: 1fr 2fr;
+        grid-columns: 4fr 1fr;
+        min-width: 0;
     }
     """
     
@@ -636,6 +664,7 @@ class FluxorApp(App):
         self._polling_task: Optional[asyncio.Task] = None
         self._session_watch_task: Optional[asyncio.Task] = None
         self.known_sessions: set[str] = set()  # Track seen session IDs
+        self.patch_history: list[dict] = []  # Track applied patches to avoid re-fixing old issues
     
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -915,19 +944,35 @@ class FluxorApp(App):
             
             rage_clicks = [e for e in events if e.get("event_type") == "rage_click"]
             unique_sessions = len(set(e.get("session_id", "") for e in events))
+
+            last_patch = self.patch_history[-1] if self.patch_history else None
+            last_patch_ts = _parse_timestamp(last_patch.get("timestamp")) if last_patch else None
+
+            rage_clicks_recent = []
+            rage_clicks_stale = []
+            for e in rage_clicks:
+                event_ts = _event_timestamp(e)
+                if last_patch_ts and event_ts and event_ts <= last_patch_ts:
+                    rage_clicks_stale.append(e)
+                else:
+                    rage_clicks_recent.append(e)
             
             data_summary = {
                 "total_events": len(events),
                 "unique_sessions": unique_sessions,
                 "events_by_type": events_by_type,
                 "rage_clicks": len(rage_clicks),
+                "rage_clicks_recent": len(rage_clicks_recent),
+                "rage_clicks_stale": len(rage_clicks_stale),
+                "last_patch_timestamp": last_patch.get("timestamp") if last_patch else None,
+                "patch_history": self.patch_history[-5:],
                 "rage_click_details": [
                     {
                         "element_id": e.get("element_id"),
                         "element_text": e.get("element_text"),
                         "page_variant": e.get("page_variant"),
                     }
-                    for e in rage_clicks[:10]
+                    for e in rage_clicks_recent[:10]
                 ],
                 "sample_events": [
                     {
@@ -961,9 +1006,13 @@ Your job is to analyze behavior data, detect specific UX problems, and suggest O
 
 ## GUIDELINES
 
-1. Look at the ACTUAL code above - reference real element IDs, class names, and component structure
-2. Suggest changes that target SPECIFIC elements you can see in the code
-3. The "prompt" field will be sent DIRECTLY to a coding AI agent (opencode)
+1. **DATA-DRIVEN ONLY**: Your decision to edit MUST be based PURELY on the provided user behavior data (e.g., rage clicks, confusion, abandonment). Do NOT suggest changes based on code conventions, "best practices", or aesthetics unless the data proves it is causing friction.
+2. If the data does not show friction (e.g., no rage clicks, high completion rate), do NOT suggest changes, even if the code looks "bad" or "stacked".
+3. Use the provided code ONLY for context to understand what the data refers to (e.g., which button ID corresponds to the rage clicks).
+4. Look at the ACTUAL code above - reference real element IDs, class names, and component structure.
+5. Suggest changes that target SPECIFIC elements you can see in the code.
+6. Keep the "prompt" field concise and actionable (short, direct instructions only). It will be sent DIRECTLY to a coding AI agent (opencode).
+7. Use patch history: Do NOT repeat a fix for the same element unless there is post-patch data showing the issue persists after the last patch.
 
 ## EXAMPLE PROMPT FORMATS
 
@@ -977,6 +1026,7 @@ IMPORTANT: Make prompts:
 - Specific about WHAT file to edit (always app/page.tsx)
 - Specific about WHAT to change (reference actual elements from the code above)
 - Specific about HOW to change it (new values, new code patterns)
+- As concise as possible while still unambiguous
 - Self-contained - the coding agent can see the file but not this conversation"""
 
             prompt = f"""Analyze this behavior data from the checkout page and identify the most critical UX issue to fix:
@@ -987,6 +1037,8 @@ Focus on the most impactful issue based on:
 1. Rage clicks indicate frustration - highest priority
 2. Repeated form interactions indicate confusion
 3. Abandonment patterns indicate friction
+
+Also consider patch history: if rage clicks are only BEFORE the last patch, do not repeat the same change. Only re-fix when post-patch data shows continued friction.
 
 Return exactly ONE high-priority action_item with a detailed prompt for the coding agent."""
 
@@ -1046,7 +1098,7 @@ Return exactly ONE high-priority action_item with a detailed prompt for the codi
             Phase.EXPERIMENTING,
             f"Starting experiment: {action_item.get('change_description', 'Unknown')}",
             f"Priority: {action_item.get('priority')}. Expected: {action_item.get('expected_improvement')}",
-            f"Calling opencode with prompt for {action_item.get('file_path')}"
+            f"Objective: {action_item.get('file_path')}"
         )
         
         experiment_id = f"exp_{int(datetime.now().timestamp())}_{os.urandom(3).hex()}"
@@ -1065,6 +1117,15 @@ Return exactly ONE high-priority action_item with a detailed prompt for the codi
             
             if not result.get("ok"):
                 raise ValueError(result.get("error", "Unknown error"))
+
+            patch_timestamp = result.get("timestamp") or datetime.now().isoformat()
+            self.patch_history.append({
+                "timestamp": patch_timestamp,
+                "experiment_id": experiment_id,
+                "prompt": action_item.get("prompt", ""),
+                "change_description": action_item.get("change_description", ""),
+                "file_path": action_item.get("file_path", ""),
+            })
             
             self.stats.experiments_started += 1
             self.update_stats()
@@ -1131,10 +1192,18 @@ The experiment made the following change to app/page.tsx:
 You're comparing user behavior AFTER the change was deployed.
 
 VERDICT RULES:
-- "good_change": Rage clicks decreased, completions increased, user flow improved, or clear UX improvement signals
-- "useless_change": No improvement, same issues persist, rage clicks still happening, or metrics got worse
+- "good_change": 
+    1. Rage clicks decreased, completions increased, or user flow improved.
+    2. Metrics remained the same (neutral change).
+    3. Metrics got worse, BUT in a completely unrelated area (e.g., rage clicks increased on a component far away from where the change was made).
+    IN THESE CASES, KEEP THE CHANGE (return "good_change").
 
-Be decisive. If there's no clear improvement, verdict should be "useless_change" so we can revert and try something else.
+- "useless_change": 
+    1. The change ACTIVELY INCREASED poor UX indicators related to the modified area (e.g., you changed a button and now people are rage clicking THAT button).
+    2. The change broke the flow significantly in the target area.
+    ONLY REVERT IF THE CHANGE ITSELF CAUSED THE REGRESSION.
+
+CRITICAL: Do not correlate unrelated regressions. If I removed a banner at the top, and rage clicks increased on the 'Submit' button at the bottom, that is NOT the fault of the banner removal. In that case, return "good_change" so we keep the banner removal.
 
 For the "before" metrics, use reasonable baseline estimates (e.g., if we had rage clicks before, assume a rate like 0.3).
 For "after" metrics, calculate from the actual data provided."""
@@ -1207,7 +1276,7 @@ Did the change improve the user experience? Analyze the event patterns and provi
             Phase.DECIDING,
             "Change was not beneficial. Initiating revert...",
             "Metrics did not improve or got worse after the change.",
-            f"Calling opencode to revert {experiment.id[:8]}"
+            f"Objective: Revert experiment {experiment.id[:8]}"
         )
         
         try:
